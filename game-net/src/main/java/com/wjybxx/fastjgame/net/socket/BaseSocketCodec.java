@@ -27,6 +27,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
+import org.apache.commons.lang3.RandomUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,6 +59,7 @@ public abstract class BaseSocketCodec extends ChannelDuplexHandler {
      * 协议编解码工具
      */
     private final ProtocolCodec codec;
+    private int discardCount = 0;
 
     protected BaseSocketCodec(ProtocolCodec codec) {
         this.codec = codec;
@@ -73,6 +75,13 @@ public abstract class BaseSocketCodec extends ChannelDuplexHandler {
     public void channelRead(ChannelHandlerContext ctx, Object byteBuf) throws Exception {
         ByteBuf msg = (ByteBuf) byteBuf;
         try {
+            if (RandomUtils.nextInt(0, 10000) < 1000) {
+                // 模拟丢包
+                discardCount++;
+                logger.warn("{} discardCount {}", this.getClass().getSimpleName(), discardCount);
+                return;
+            }
+
             long realSum = msg.readLong();
             long logicSum = NetUtils.calChecksum(msg, msg.readerIndex(), msg.readableBytes());
             if (realSum != logicSum) {

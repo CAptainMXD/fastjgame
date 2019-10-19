@@ -102,7 +102,7 @@ class ExampleRpcServerLoop extends DisruptorEventLoop {
 
     @Override
     protected void loopOnce() {
-        if (System.currentTimeMillis() - startTime > 3 * TimeUtils.MIN) {
+        if (System.currentTimeMillis() - startTime > 5 * TimeUtils.MIN) {
             shutdown();
         }
     }

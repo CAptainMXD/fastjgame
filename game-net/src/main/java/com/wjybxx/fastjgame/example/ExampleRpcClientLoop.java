@@ -24,7 +24,6 @@ import com.wjybxx.fastjgame.concurrent.disruptor.DisruptorWaitStrategyType;
 import com.wjybxx.fastjgame.eventloop.NetContext;
 import com.wjybxx.fastjgame.misc.DefaultProtocolDispatcher;
 import com.wjybxx.fastjgame.misc.HostAndPort;
-import com.wjybxx.fastjgame.misc.RpcBuilder;
 import com.wjybxx.fastjgame.net.common.SessionDisconnectAware;
 import com.wjybxx.fastjgame.net.local.LocalPort;
 import com.wjybxx.fastjgame.net.local.LocalSessionConfig;
@@ -35,9 +34,8 @@ import com.wjybxx.fastjgame.utils.TimeUtils;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.Arrays;
 import java.util.concurrent.ThreadFactory;
-import java.util.stream.IntStream;
+import java.util.concurrent.TimeUnit;
 
 /**
  * rpc请求客户端示例
@@ -58,8 +56,13 @@ public class ExampleRpcClientLoop extends DisruptorEventLoop {
     public ExampleRpcClientLoop(@Nonnull ThreadFactory threadFactory,
                                 @Nonnull RejectedExecutionHandler rejectedExecutionHandler,
                                 @Nullable LocalPort localPort) {
-        super(null, threadFactory, rejectedExecutionHandler, DisruptorWaitStrategyType.YIELD);
+        super(null, threadFactory, rejectedExecutionHandler, DisruptorWaitStrategyType.TIMEOUT);
         this.localPort = localPort;
+    }
+
+    @Override
+    protected long timeoutInNano() {
+        return TimeUnit.MILLISECONDS.toNanos(50);
     }
 
     @Override
@@ -82,9 +85,13 @@ public class ExampleRpcClientLoop extends DisruptorEventLoop {
                     .setLifecycleAware(new ServerDisconnectAward())
                     .setDispatcher(new DefaultProtocolDispatcher())
                     .setAutoReconnect(true)
-                    .setRpcCallbackTimeoutMs((int) TimeUtils.MIN)
-                    .setMaxPendingMessages(100)
-                    .setMaxCacheMessages(20000)
+                    .setRpcCallbackTimeoutMs((int) (5 * TimeUtils.MIN))
+                    .setMaxConnectTimes(3)
+                    .setMaxVerifyTimes(3)
+                    .setVerifyTimeoutMs(3 * 1000)
+                    .setAckTimeoutMs(3 * 1000)
+                    .setMaxPendingMessages(50)
+                    .setMaxCacheMessages(10000)
                     .build();
 
             final HostAndPort address = new HostAndPort(NetUtils.getLocalIp(), ExampleConstants.tcpPort);
@@ -104,11 +111,6 @@ public class ExampleRpcClientLoop extends DisruptorEventLoop {
     }
 
     private void sendRequest(final int index) {
-        final long start = System.nanoTime();
-        final String callResult = ExampleRpcServiceRpcProxy.combine("wjybxx", String.valueOf(index)).syncCall(session);
-        final long costTimeMs = System.nanoTime() - start;
-        System.out.println("SyncCall - " + index + " - " + callResult + " , cost time nano " + costTimeMs);
-
         // 方法无返回值，也可以监听，只要调用的是call, sync, syncCall都可以获知调用结果，就像future
         ExampleRpcServiceRpcProxy.hello("wjybxx- " + index)
                 .onSuccess(result -> System.out.println("hello - " + index + " - " + result))
@@ -117,28 +119,6 @@ public class ExampleRpcClientLoop extends DisruptorEventLoop {
         ExampleRpcServiceRpcProxy.queryId("wjybxx-" + index)
                 .onSuccess(result -> System.out.println("queryId - " + index + " - " + result))
                 .call(session);
-
-        // - SaferRpcCallback
-        ExampleRpcServiceRpcProxy.queryId("wjybxx-" + index)
-                .onSuccess(this::afterQueryId, index)
-                .call(session);
-
-        ExampleRpcServiceRpcProxy.inc(index)
-                .onSuccess(result -> System.out.println("inc - " + index + " - " + result))
-                .call(session);
-
-        ExampleRpcServiceRpcProxy.incWithSession(index)
-                .onSuccess(result -> System.out.println("incWithSession - " + index + " - " + result))
-                .call(session);
-
-        ExampleRpcServiceRpcProxy.incWithChannel(index)
-                .onSuccess(result -> System.out.println("incWithChannel - " + index + " - " + result))
-                .call(session);
-
-        ExampleRpcServiceRpcProxy.incWithSessionAndChannel(index)
-                .onSuccess(result -> System.out.println("incWithSessionAndChannel - " + index + " - " + result))
-                .call(session);
-
         // 模拟场景服务器通过网关发送给玩家 - 注意：序列化方式必须一致。
         ExampleRpcServiceRpcProxy.sendToPlayer(12345, "这里后期替换为protoBuf消息")
                 .onSuccess(result -> System.out.println("sendToPlayer - " + index + " - invoke success"))
@@ -152,16 +132,6 @@ public class ExampleRpcClientLoop extends DisruptorEventLoop {
         } catch (Exception e) {
             e.printStackTrace();
         }
-
-        // 模拟广播X次
-        final RpcBuilder<?> builder = ExampleRpcServiceRpcProxy.notifySuccess(index);
-        IntStream.rangeClosed(1, 3).forEach(i -> builder.send(session));
-        // 上面等同于下面
-        builder.broadcast(Arrays.asList(session, session, session));
-
-        // 阻塞到前面的rpc都返回，使得每次combine调用不被其它rpc调用影响
-        // 因为调用的是sync(Session),对方的网络底层一定会返回一个结果，如果方法本身为void，那么返回的就是null。
-        ExampleRpcServiceRpcProxy.sync().sync(session);
     }
 
     /**
